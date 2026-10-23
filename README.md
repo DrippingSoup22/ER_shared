@@ -45,7 +45,9 @@ Paramdex checks read `ER_PARAMDEX_ROOT`
 
 ## License
 
-GPL-3.0-or-later (see `LICENSE`). The container code descends from ER Merchant
-Editor's save code, which came from SaveForge-derived work. `charslot`'s
-identity offsets and event-flag block table come from
+Copyright (C) 2026 DrippingSoup22. Free software under the GNU General Public
+License, version 3 or (at your option) any later version; see
+[LICENSE](LICENSE). The container code descends from ER Merchant Editor's save
+code, which came from SaveForge-derived work. `charslot`'s identity offsets and
+event-flag block table come from
 [EldenRing-SaveForge](https://github.com/oisis/EldenRing-SaveForge) (GPL-3.0).

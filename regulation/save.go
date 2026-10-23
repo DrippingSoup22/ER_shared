@@ -47,6 +47,8 @@ const (
 	aesIVSize              = 16
 	dcxHeaderSize          = 76
 	soulsFormatsWindowSize = 1 << 16
+	// The game's BND4 is about 52 MiB; this leaves room for added rows.
+	maxBND4Size = 256 << 20
 )
 
 // Regulation is a loaded save. Callers edit BND4 and pass the result to Build.
@@ -114,6 +116,11 @@ func Load(path string) (*Regulation, error) {
 	compressedSize := int(binary.BigEndian.Uint32(plaintext[32:36]))
 	if compressedSize <= 0 || dcxHeaderSize+compressedSize > len(plaintext) {
 		return nil, fmt.Errorf("invalid DCX compressed size %d: %w", compressedSize, ErrUnsupportedRegulation)
+	}
+	// The header's size sets the buffer, so it is trusted only up to a bound: a
+	// corrupt save fails here instead of asking for gigabytes.
+	if decompressedSize <= 0 || decompressedSize > maxBND4Size {
+		return nil, fmt.Errorf("invalid DCX decompressed size %d: %w", decompressedSize, ErrUnsupportedRegulation)
 	}
 
 	decoder, err := zstd.NewReader(nil)
