@@ -6,7 +6,7 @@ refused). It holds format code only; what the game's data means is not here.
 
 | Package | What it is |
 |---|---|
-| `regulation/` | The save container on both platforms (with PC's per-region MD5) and the regulation inside it: AES and DCX/ZSTD, BND4 archive entries, PARAM tables, inserting and removing rows (each operation proves every other row survived), the registry of measured table layouts, and Paramdex schemas for decoding rows by field name. |
+| `regulation/` | The save container on both platforms (with PC's per-region MD5) and the regulation inside it: AES and DCX/ZSTD, BND4 archive entries, PARAM tables, inserting and removing rows (each operation proves every other row survived), the registry of measured table layouts, and Paramdex schemas for decoding rows by field name and writing a field (`EncodeParamField`). |
 | `charslot/` | The ten character slots: which hold a character, its name and level, and its event flags, read and written through the game's block table. |
 | `releasezip/` | Packs one release folder into a ZIP: keeps executable bits, writes through a temporary file, never overwrites. `go run github.com/DrippingSoup22/ER_shared/releasezip -root <folder> -out <file.zip>`. |
 

@@ -391,6 +391,80 @@ func DecodeParamField(blob []byte, field ParamField) (any, error) {
 	}
 }
 
+// EncodeParamField writes value into a scalar or bit field of a row in place:
+// the counterpart of DecodeParamField. It refuses a value the field cannot
+// hold exactly (an integer out of range or with a fraction, a non-finite or
+// out-of-range float) and arrays and strings, so a row is never written with
+// a silently truncated value.
+func EncodeParamField(blob []byte, field ParamField, value float64) error {
+	if field.Offset < 0 || field.Size <= 0 || field.Offset > len(blob)-field.Size {
+		return fmt.Errorf("field %s range is out of bounds", field.Name)
+	}
+	if math.IsNaN(value) || math.IsInf(value, 0) {
+		return fmt.Errorf("field %s: value must be finite", field.Name)
+	}
+	whole := value == math.Trunc(value)
+	if field.BitSize > 0 {
+		limit := float64(uint64(1)<<field.BitSize - 1)
+		if !whole || value < 0 || value > limit {
+			return fmt.Errorf("field %s: %g is not an integer between 0 and %g", field.Name, value, limit)
+		}
+		var raw uint64
+		switch field.Size {
+		case 1:
+			raw = uint64(blob[field.Offset])
+		case 2:
+			raw = uint64(binary.LittleEndian.Uint16(blob[field.Offset:]))
+		case 4:
+			raw = uint64(binary.LittleEndian.Uint32(blob[field.Offset:]))
+		default:
+			return fmt.Errorf("field %s: unsupported bitfield unit size %d", field.Name, field.Size)
+		}
+		mask := (uint64(1)<<field.BitSize - 1) << field.BitOffset
+		raw = raw&^mask | uint64(value)<<field.BitOffset
+		switch field.Size {
+		case 1:
+			blob[field.Offset] = byte(raw)
+		case 2:
+			binary.LittleEndian.PutUint16(blob[field.Offset:], uint16(raw))
+		case 4:
+			binary.LittleEndian.PutUint32(blob[field.Offset:], uint32(raw))
+		}
+		return nil
+	}
+	if field.ArrayLength > 1 {
+		return fmt.Errorf("field %s: arrays are not written by value", field.Name)
+	}
+	ranges := map[string][2]float64{
+		"s8": {math.MinInt8, math.MaxInt8}, "u8": {0, math.MaxUint8},
+		"s16": {math.MinInt16, math.MaxInt16}, "u16": {0, math.MaxUint16},
+		"s32": {math.MinInt32, math.MaxInt32}, "u32": {0, math.MaxUint32},
+	}
+	if field.Type == "f32" {
+		if math.Abs(value) > math.MaxFloat32 {
+			return fmt.Errorf("field %s: %g is outside float32 range", field.Name, value)
+		}
+		binary.LittleEndian.PutUint32(blob[field.Offset:], math.Float32bits(float32(value)))
+		return nil
+	}
+	bounds, ok := ranges[field.Type]
+	if !ok {
+		return fmt.Errorf("field %s: unsupported field type %q", field.Name, field.Type)
+	}
+	if !whole || value < bounds[0] || value > bounds[1] {
+		return fmt.Errorf("field %s: %g is not a %s", field.Name, value, field.Type)
+	}
+	switch field.Size {
+	case 1:
+		blob[field.Offset] = byte(int64(value))
+	case 2:
+		binary.LittleEndian.PutUint16(blob[field.Offset:], uint16(int64(value)))
+	case 4:
+		binary.LittleEndian.PutUint32(blob[field.Offset:], uint32(int64(value)))
+	}
+	return nil
+}
+
 func paramValueIsDefault(value any, field ParamField) bool {
 	if field.ArrayLength > 1 || field.Type == "fixstr" || field.Type == "fixstrW" {
 		return value == "" || value == strings.Repeat("00", field.Size)

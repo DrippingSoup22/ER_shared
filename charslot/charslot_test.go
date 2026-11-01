@@ -98,7 +98,7 @@ func TestBlockTableFitsTheBitfield(t *testing.T) {
 func TestEveryOccupiedSlotOfARealSaveReads(t *testing.T) {
 	path := os.Getenv("ER_SAVE")
 	if path == "" {
-		path = filepath.Join("..", "..", "ER_research", "save_file", "memory-1.17.1.dat")
+		path = filepath.Join("..", "..", "ER_research", "save_file", "memory-1.17.3.dat")
 	}
 	data, err := os.ReadFile(path)
 	if err != nil {

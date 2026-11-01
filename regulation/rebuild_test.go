@@ -1,6 +1,7 @@
 package regulation
 
 import (
+	"bytes"
 	"encoding/binary"
 	"sort"
 	"strings"
@@ -186,6 +187,52 @@ func TestRowsGoWhereTheyAreToldOrAreRefused(t *testing.T) {
 		if _, err := RemoveRows(bnd4, layout, removals); err == nil {
 			t.Errorf("removing %d rows starting %v was accepted", len(removals), removals[0])
 		}
+	}
+}
+
+// A named row reads its name back while every other row keeps its own, and
+// removing the named rows leaves the regulation byte for byte as it was.
+func TestNamedRowsLeaveNoTraceOnceRemoved(t *testing.T) {
+	bnd4 := realBND4(t)
+	layout := MustLayout("Bullet")
+	table, err := OpenTable(bnd4, layout)
+	if err != nil {
+		t.Fatal(err)
+	}
+	last := table.Rows[0].ID
+	for _, row := range table.Rows {
+		last = max(last, row.ID)
+	}
+	named := map[int32]string{last + 1: "a record ✦ ĀāĂ", last + 2: "and another"}
+	grown, err := InsertRows(bnd4, layout, []RowInsertion{
+		{RowID: last + 1, CopyFrom: table.Rows[0].ID, Name: named[last+1]},
+		{RowID: last + 2, CopyFrom: table.Rows[0].ID, Name: named[last+2]},
+		{RowID: last + 3, CopyFrom: table.Rows[0].ID},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	after, err := OpenTable(grown, layout)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for id, name := range named {
+		if got := after.RowName(id); got != name {
+			t.Fatalf("row %d is named %q, want %q", id, got, name)
+		}
+	}
+	before, now := rowNames(t, bnd4, layout), rowNames(t, grown, layout)
+	for id, name := range before {
+		if now[id] != name {
+			t.Fatalf("row %d is named %q after the insertion, was %q", id, now[id], name)
+		}
+	}
+	back, err := RemoveRows(grown, layout, []int32{last + 1, last + 2, last + 3})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(back, bnd4) {
+		t.Fatal("removing the named rows did not give the regulation back as it was")
 	}
 }
 

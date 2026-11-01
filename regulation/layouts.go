@@ -80,6 +80,15 @@ var paramLayouts = []TableLayout{
 		ParamType: "BUDDY_STONE_PARAM_ST", DataVersion: 2, RowSize: 64},
 	{Table: "CharaInitParam", Entry: "CharaInitParam.param",
 		ParamType: "CHARACTER_INIT_PARAM", DataVersion: 2, RowSize: 320},
+	{Table: "FaceParam", Entry: "FaceParam.param",
+		ParamType: "FACE_PARAM_ST", DataVersion: 2, RowSize: 240,
+		Note: "A person's face, named by CharaInitParam.npcPlayerFaceGenId. The save's " +
+			"FACE record carries the same values in another order."},
+	{Table: "EquipParamCustomWeapon", Entry: "EquipParamCustomWeapon.param",
+		ParamType: "EQUIP_PARAM_CUSTOM_WEAPON_ST", DataVersion: 1, RowSize: 16,
+		Note: "A weapon with an Ash of War of its own: the base weapon with its affinity, " +
+			"the EquipParamGem row and the upgrade level. A CharaInitParam hand slot names " +
+			"one when its wepParamType is 1."},
 	{Table: "ShopLineupParam", Entry: "ShopLineupParam.param",
 		ParamType: "SHOP_LINEUP_PARAM", DataVersion: 3, RowSize: 52},
 	{Table: "RoleParam", Entry: "RoleParam.param",
@@ -117,6 +126,18 @@ var paramLayouts = []TableLayout{
 		Note: "The entry is Bullet.param but the definition is BulletParam.xml, the " +
 			"same trap as SpEffectParam/SpEffect.xml. Goods with refCategory 1 " +
 			"reach their effect through this table."},
+	{Table: "BulletCreateLimitParam", Entry: "BulletCreateLimitParam.param",
+		ParamType: "BULLET_CREATE_LIMIT_PARAM_ST", DataVersion: 1, RowSize: 32,
+		Note: "The bullet creation-limit groups a Bullet row names by its u8 " +
+			"createLimitGroupId: how many of a group's bullets may live at once, " +
+			"counted per owner or for everyone. A full group removes its oldest " +
+			"bullet when a new one is made. Row 0 is all zero, no limit."},
+	{Table: "BehaviorParam_PC", Entry: "BehaviorParam_PC.param", SchemaFile: "BehaviorParam",
+		ParamType: "BEHAVIOR_PARAM_ST", DataVersion: 2, RowSize: 32,
+		Note: "A player's behaviours: what an animation event or an effect's " +
+			"behaviorId starts, by refType (0 an attack, 1 a bullet, 2 an effect) " +
+			"and refId. The definition is BehaviorParam.xml, shared with the " +
+			"enemies' BehaviorParam."},
 }
 
 var layoutsByTable = func() map[string]TableLayout {

@@ -97,7 +97,7 @@ func requireSave(t *testing.T) string {
 	t.Helper()
 	path := os.Getenv("ER_SAVE")
 	if path == "" {
-		path = filepath.Join("..", "..", "ER_research", "save_file", "memory-1.17.1.dat")
+		path = filepath.Join("..", "..", "ER_research", "save_file", "memory-1.17.3.dat")
 	}
 	if _, err := os.Stat(path); err != nil {
 		t.Skipf("private save %s is absent: %v", path, err)

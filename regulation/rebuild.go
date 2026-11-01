@@ -15,6 +15,7 @@ import (
 	"crypto/sha256"
 	"encoding/binary"
 	"fmt"
+	"unicode/utf16"
 )
 
 const (
@@ -74,8 +75,7 @@ func OpenTable(bnd4 []byte, layout TableLayout) (*Table, error) {
 }
 
 // RowInsertion is one row to add, byte-copied from an existing row. Callers
-// then edit the copy like any other row. An inserted row carries no name:
-// names are debug strings the game never reads.
+// then edit the copy like any other row.
 type RowInsertion struct {
 	RowID    int32
 	CopyFrom int32
@@ -83,6 +83,11 @@ type RowInsertion struct {
 	// appends, which is allowed only when RowID is above every existing ID.
 	// Placement matters: BuddyParam's consumer walks a contiguous block.
 	InsertAfter *int32
+	// Name, if any, is the row's name, a debug string the game never reads.
+	// It is appended after every string the table holds, so that removing
+	// the row again takes it back out and leaves the table as it was. Empty
+	// leaves the row unnamed.
+	Name string
 }
 
 // InsertRows returns a new BND4 with the rows added to one table. The input is
@@ -206,13 +211,26 @@ type plannedRow struct {
 	// originalIndex is the row's position in the table being rebuilt, or -1
 	// for an inserted row.
 	originalIndex int
+	// name is an inserted row's, if it has one.
+	name string
+}
+
+// utf16z is a name as a table stores it: UTF-16LE and a NUL.
+func utf16z(name string) []byte {
+	units := utf16.Encode([]rune(name))
+	out := make([]byte, 2*len(units)+2)
+	for k, unit := range units {
+		binary.LittleEndian.PutUint16(out[2*k:], unit)
+	}
+	return out
 }
 
 // serialiseTable writes one PARAM holding exactly the planned rows, in order.
 // Insertion and removal share it: the row count changes, the row table and
 // body regions change by whole rows, the string region moves by their sum, and
-// every body and name pointer follows.
-func serialiseTable(table *Table, header *ParamHeader, geometry paramGeometry, planned []plannedRow) ([]byte, error) {
+// every body and name pointer follows. The string region is kept up to end,
+// and an inserted row's name is appended after it.
+func serialiseTable(table *Table, header *ParamHeader, geometry paramGeometry, planned []plannedRow, end int) ([]byte, error) {
 	data, layout := table.Data, table.Layout
 	if len(planned) == 0 {
 		return nil, fmt.Errorf("%s: a rebuilt table may not be empty", layout.Entry)
@@ -227,12 +245,23 @@ func serialiseTable(table *Table, header *ParamHeader, geometry paramGeometry, p
 	newDataStart := geometry.dataStart + tableDelta
 	newStringsOffset := geometry.stringsOffset + tableDelta + bodyDelta
 
-	result := make([]byte, len(data)+tableDelta+bodyDelta)
+	names := 0
+	for _, row := range planned {
+		if row.originalIndex < 0 && row.name != "" {
+			names += len(utf16z(row.name))
+		}
+	}
+	if names > 0 && end%2 != 0 {
+		return nil, fmt.Errorf("%s: the string region ends on an odd byte, so no name can follow it: %w",
+			layout.Entry, ErrUnsupportedRegulation)
+	}
+	result := make([]byte, end+tableDelta+bodyDelta+names)
 	copy(result[:header.RowTableOffset], data[:header.RowTableOffset])
 	// Whatever sits between the row table and the first body (padding, on
 	// every table measured) is carried across rather than assumed empty.
 	copy(result[newTableEnd:newDataStart], data[geometry.tableEnd:geometry.dataStart])
-	copy(result[newStringsOffset:], data[geometry.stringsOffset:])
+	copy(result[newStringsOffset:], data[geometry.stringsOffset:end])
+	nameAt := end + tableDelta + bodyDelta
 
 	binary.LittleEndian.PutUint16(result[10:12], uint16(len(planned)))
 	binary.LittleEndian.PutUint32(result[0:4], uint32(newStringsOffset))
@@ -248,14 +277,20 @@ func serialiseTable(table *Table, header *ParamHeader, geometry paramGeometry, p
 			oldBase := header.RowTableOffset + row.originalIndex*rowHeaderSize
 			copy(result[base:base+rowHeaderSize], data[oldBase:oldBase+rowHeaderSize])
 			if nameOffset := binary.LittleEndian.Uint64(data[oldBase+16 : oldBase+24]); nameOffset != 0 {
-				if nameOffset < uint64(geometry.stringsOffset) {
-					return nil, fmt.Errorf("%s: row %d name precedes the string region: %w",
+				if nameOffset < uint64(geometry.stringsOffset) || nameOffset >= uint64(end) {
+					return nil, fmt.Errorf("%s: row %d name lies outside the string region kept: %w",
 						layout.Entry, row.id, ErrUnsupportedRegulation)
 				}
 				binary.LittleEndian.PutUint64(result[base+16:base+24], uint64(int(nameOffset)+tableDelta+bodyDelta))
 			}
 		} else {
 			binary.LittleEndian.PutUint32(result[base:base+4], uint32(row.id))
+			if row.name != "" {
+				stored := utf16z(row.name)
+				copy(result[nameAt:], stored)
+				binary.LittleEndian.PutUint64(result[base+16:base+24], uint64(nameAt))
+				nameAt += len(stored)
+			}
 		}
 		binary.LittleEndian.PutUint64(result[base+8:base+16], uint64(body))
 		copy(result[body:body+rowSize], data[row.bodyOffset:row.bodyOffset+rowSize])
@@ -307,7 +342,7 @@ func rebuildTableWithRows(table *Table, insertions []RowInsertion) ([]byte, erro
 		planned = append(planned, plannedRow{id: row.ID, bodyOffset: row.DataOffset, originalIndex: index})
 	}
 	for _, insertion := range insertions {
-		added := plannedRow{id: insertion.RowID, bodyOffset: table.ByID[insertion.CopyFrom].DataOffset, originalIndex: -1}
+		added := plannedRow{id: insertion.RowID, bodyOffset: table.ByID[insertion.CopyFrom].DataOffset, originalIndex: -1, name: insertion.Name}
 		if insertion.InsertAfter == nil {
 			planned = append(planned, added)
 			continue
@@ -326,7 +361,7 @@ func rebuildTableWithRows(table *Table, insertions []RowInsertion) ([]byte, erro
 		copy(planned[anchor+2:], planned[anchor+1:])
 		planned[anchor+1] = added
 	}
-	return serialiseTable(table, header, geometry, planned)
+	return serialiseTable(table, header, geometry, planned, len(table.Data))
 }
 
 func rebuildTableWithoutRows(table *Table, removals []int32) ([]byte, error) {
@@ -352,7 +387,55 @@ func rebuildTableWithoutRows(table *Table, removals []int32) ([]byte, error) {
 			planned = append(planned, plannedRow{id: row.ID, bodyOffset: row.DataOffset, originalIndex: index})
 		}
 	}
-	return serialiseTable(table, header, geometry, planned)
+	// A removed row's name at the end of the strings goes with it, as an
+	// insertion appended it there; one elsewhere stays, unread.
+	end := len(table.Data)
+	for trimmed := true; trimmed; {
+		trimmed = false
+		for index, row := range table.Rows {
+			start, stop, named := table.nameSpan(index)
+			if named && doomed[row.ID] && stop == end && start >= geometry.stringsOffset {
+				end, trimmed = start, true
+			}
+		}
+	}
+	return serialiseTable(table, header, geometry, planned, end)
+}
+
+// nameSpan is where row index's name lies in the table's data, its NUL
+// included, if it has one.
+func (t *Table) nameSpan(index int) (start, stop int, named bool) {
+	base := paramRowTableOffset + index*rowHeaderSize
+	offset := binary.LittleEndian.Uint64(t.Data[base+16 : base+24])
+	if offset == 0 || offset >= uint64(len(t.Data)) {
+		return 0, 0, false
+	}
+	stop = int(offset)
+	for stop+2 <= len(t.Data) && binary.LittleEndian.Uint16(t.Data[stop:]) != 0 {
+		stop += 2
+	}
+	return int(offset), min(stop+2, len(t.Data)), true
+}
+
+// RowName is a row's name, or "" if it has none or is not there.
+func (t *Table) RowName(id int32) string {
+	for index, row := range t.Rows {
+		if row.ID != id {
+			continue
+		}
+		start, stop, named := t.nameSpan(index)
+		if !named {
+			return ""
+		}
+		units := make([]uint16, 0, (stop-start)/2)
+		for k := start; k+2 <= stop; k += 2 {
+			if unit := binary.LittleEndian.Uint16(t.Data[k:]); unit != 0 {
+				units = append(units, unit)
+			}
+		}
+		return string(utf16.Decode(units))
+	}
+	return ""
 }
 
 // reopenInHeaderOrder reopens a rebuilt table and checks its bodies are still
@@ -409,6 +492,9 @@ func verifyRowInsertion(bnd4 []byte, layout TableLayout, shipped map[int32][32]b
 		}
 		if digests[insertion.RowID] != shipped[insertion.CopyFrom] {
 			return fmt.Errorf("%s inserted row %d is not a copy of row %d", layout.Entry, insertion.RowID, insertion.CopyFrom)
+		}
+		if name := table.RowName(insertion.RowID); name != insertion.Name {
+			return fmt.Errorf("%s inserted row %d is named %q, not %q", layout.Entry, insertion.RowID, name, insertion.Name)
 		}
 		if insertion.InsertAfter == nil {
 			continue
